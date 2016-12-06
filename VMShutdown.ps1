@@ -57,22 +57,30 @@ try
 {
     $startTime = [DateTime]::UtcNow
 
-    $spConnection = Get-AutomationConnection -Name $connectionName | Write-Verbose
+    $spConnection = Get-AutomationConnection -Name $connectionName
 
-    $azCtx = Add-AzureRmAccount -ServicePrincipal -TenantId $spConnection.TenantId -ApplicationId $spConnection.ApplicationId -CertificateThumbprint $spConnection.CertificateThumbprint
+    $azCtx = Add-AzureRmAccount -ServicePrincipal `
+                                -TenantId $spConnection.TenantId `
+                                -ApplicationId $spConnection.ApplicationId `
+                                -SubscriptionId $spConnection.SubscriptionId `
+                                -CertificateThumbprint $spConnection.CertificateThumbprint
 
-    $subs = @(Get-AzureRmSubscription -TenantId $armCtx.Context.Tenant.TenantId | ? State -EQ 'Enabled') | Write-Verbose
+    $subs = @(Get-AzureRmSubscription -TenantId $azCtx.Context.Tenant.TenantId | ? State -EQ 'Enabled')
 
     foreach($sub in $subs)
     {
-        $armCtx = $sub | Set-AzureRmContext
+        Write-Output "Looking at subscription `"$($sub.SubscriptionName)`""
+        $azCtx = $sub | Set-AzureRmContext
 
+        Write-Output "Looking for VMs with 'shutDownAt' tag."
         # Get a list of VMs with the 'shutDownAt' tag value.
         $vms = @(Find-AzureRmResource -ResourceType 'Microsoft.Compute/virtualMachines'  | % { $tags = $_.Tags; $_} | select ResourceGroupName, ResourceName, @{ Name='ShutDownAt'; Expression={$tags['shutDownAt']} })
 
+        Write-Output "Checking resource group for 'shutDownAt' tag."
         # Add the 'shutDownAt' tag value from the resource group, if not set on the resource
         $vms = @($vms | % { $rgTags = (Get-AzureRmResourceGroup -Name $_.ResourceGroupName).Tags; $_ } | select ResourceGroupName, ResourceName, @{ Name='ShutDownAt'; Expression={if ($_.ShutDownAt) {$_.ShutDownAt} else {$rgTags['shutDownAt']}} })
 
+        Write-Output "Checking VM power state"
         # Get the power state for each of these VM's
         $vms = @($vms | % { $status = Get-AzureRmVM -Status -ResourceGroupName $_.ResourceGroupName -Name $_.ResourceName; $_ } | select ResourceGroupName, ResourceName, ShutDownAt, @{ Name='PowerState'; Expression={($status.Statuses | ? Code -Like 'PowerState/*').Code.Split('/')[1] }})
 
@@ -93,4 +101,4 @@ catch
 finally
 {
     Write-Output "Runbook finished (Duration: $(("{0:hh\:mm\:ss}" -f (([DateTime]::UtcNow) - $startTime))))"
-} 
+}
